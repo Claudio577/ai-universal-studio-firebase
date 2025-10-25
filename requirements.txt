@@ -1,0 +1,10 @@
+streamlit
+firebase-admin
+torch
+transformers
+sentence-transformers
+scikit-learn
+Pillow
+requests
+joblib
+opencv-python
