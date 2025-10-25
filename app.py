@@ -1,28 +1,35 @@
+# ======================================================
+# 🧠 AI Universal Studio – Supabase Edition
+# ======================================================
 import streamlit as st
 import numpy as np
 import pandas as pd
 import joblib
 import tempfile
 from PIL import Image
+from supabase import create_client, Client
+from sklearn.ensemble import RandomForestClassifier
 
-from firebase_utils import init_firebase, baixar_arquivo
+# Suas funções de embedding
 from multimodal_model import embed_texto, embed_imagem, embed_audio, combinar_features
 
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+# ======================================================
+# ⚙️ CONFIGURAÇÃO INICIAL
+# ======================================================
+st.set_page_config(page_title="AI Universal Studio (Supabase)", page_icon="🧠", layout="wide")
+st.title("🧠 AI Universal Studio – Supabase Edition")
+st.write("Sistema de IA que aprende automaticamente com **textos**, **imagens** e **áudios** armazenados no **Supabase** e realiza previsões multimodais.")
 
-# ==========================
-# ⚙️ Configuração inicial
-# ==========================
-st.set_page_config(page_title="AI Universal Studio (Firebase)", page_icon="🧠", layout="wide")
-st.title("🧠 AI Universal Studio – Firebase Edition")
-st.write("Sistema de IA que aprende automaticamente com **textos**, **imagens** e **áudios** armazenados no Firebase e realiza previsões multimodais.")
+# ======================================================
+# 🔑 CONEXÃO COM SUPABASE
+# ======================================================
+url = "https://rkwevdkaklsbawymtuiv.supabase.co"  # 🔗 Seu Project URL
+key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJrd2V2ZGtha2xzYmF3eW10dWl2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjEzOTA1NDQsImV4cCI6MjA3Njk2NjU0NH0.BDaD-gOJx8QAgx-mzxdBPEPqvtl37diBAUFNa5-2XAQ"
+supabase: Client = create_client(url, key)
 
-db, bucket = init_firebase()
-
-# ==========================
-# 🔁 Sessão compartilhada
-# ==========================
+# ======================================================
+# 🔁 VARIÁVEIS DE SESSÃO
+# ======================================================
 for var, default in {
     "conceitos": [],
     "modelo": None,
@@ -32,9 +39,9 @@ for var, default in {
     if var not in st.session_state:
         st.session_state[var] = default
 
-# ==========================
-# 🧭 Abas
-# ==========================
+# ======================================================
+# 🧭 ABAS
+# ======================================================
 aba = st.tabs([
     "🧩 Etapa 1 - Palavras-chave e categorias",
     "⚙️ Etapa 2 - Treinar modelo",
@@ -42,89 +49,95 @@ aba = st.tabs([
 ])
 
 # ======================================================
-# 1️⃣ ETAPA 1 – Definir palavras-chave
+# 1️⃣ ETAPA 1 – DEFINIR CONCEITOS
 # ======================================================
 with aba[0]:
     st.header("🧩 Etapa 1 – Definir conceitos de aprendizado")
-    st.write("Crie palavras-chave e associe a uma categoria. Esses dados buscarão automaticamente conteúdos no Firebase.")
+    st.write("Crie palavras-chave e associe a uma categoria. Esses dados serão salvos no **Supabase**.")
 
     entradas = []
     for i in range(3):
         col1, col2 = st.columns([3, 1])
-        palavras = col1.text_input(f"📝 Palavra-chave {i+1}:", key=f"palavra_{i}")
+        palavra = col1.text_input(f"📝 Palavra-chave {i+1}:", key=f"palavra_{i}")
         categoria = col2.selectbox(f"🎯 Categoria {i+1}:", ["Baixo", "Moderado", "Alto"], key=f"cat_{i}")
-        if palavras:
-            entradas.append({"palavra": palavras.lower(), "categoria": categoria})
+        if palavra:
+            entradas.append({"palavra": palavra.lower(), "categoria": categoria})
 
-    if entradas and st.button("💾 Salvar conceitos no Firebase"):
-        for e in entradas:
-            db.collection("conceitos").add(e)
-        st.success("✅ Conceitos salvos no Firebase!")
-        st.session_state.conceitos = entradas
-        st.dataframe(pd.DataFrame(entradas))
+    if entradas and st.button("💾 Salvar conceitos no Supabase"):
+        try:
+            for e in entradas:
+                supabase.table("conceitos").insert(e).execute()
+            st.success("✅ Conceitos salvos no Supabase!")
+            st.session_state.conceitos = entradas
+            st.dataframe(pd.DataFrame(entradas))
+        except Exception as e:
+            st.error(f"❌ Erro ao salvar conceitos: {e}")
 
 # ======================================================
-# 2️⃣ ETAPA 2 – Treinamento multimodal
+# 2️⃣ ETAPA 2 – TREINAR MODELO
 # ======================================================
 with aba[1]:
-    st.header("⚙️ Etapa 2 – Treinar modelo com dados do Firebase")
-    st.write("O app irá buscar automaticamente **imagens**, **textos** e **áudios** no Firebase relacionados às palavras-chave definidas.")
+    st.header("⚙️ Etapa 2 – Treinar modelo com dados do Supabase")
+    st.write("O app busca **imagens**, **textos** e **áudios** no Supabase relacionados às palavras-chave definidas.")
 
     if st.button("🚀 Treinar modelo agora"):
-        conceitos = list(db.collection("conceitos").stream())
-        if not conceitos:
-            st.warning("⚠️ Nenhum conceito encontrado. Vá para a Etapa 1 primeiro.")
-        else:
-            conceitos_dict = [c.to_dict() for c in conceitos]
-            st.info("🔍 Buscando arquivos no Firebase...")
+        try:
+            conceitos_resp = supabase.table("conceitos").select("*").execute()
+            conceitos = conceitos_resp.data
 
-            arquivos = list(db.collection("arquivos").stream())
-            arquivos_dict = [a.to_dict() for a in arquivos]
-
-            X, y = [], []
-
-            for conceito in conceitos_dict:
-                palavra = conceito["palavra"]
-                categoria = conceito["categoria"]
-                st.write(f"🧩 Processando conceito **{palavra} ({categoria})**")
-
-                relacionados = [a for a in arquivos_dict if palavra in [t.lower() for t in a.get("tags", [])]]
-
-                for item in relacionados:
-                    tipo = item["tipo"]
-                    try:
-                        if tipo == "texto":
-                            feat = embed_texto(item["descricao"])
-                        elif tipo == "imagem":
-                            path = baixar_arquivo(item["url"])
-                            feat = embed_imagem(path)
-                        elif tipo == "audio":
-                            path = baixar_arquivo(item["url"])
-                            feat = embed_audio(path)
-                        else:
-                            continue
-
-                        X.append(feat)
-                        y.append(categoria)
-
-                    except Exception as e:
-                        st.error(f"Erro ao processar {item['url'][:40]}...: {e}")
-
-            if len(X) < 3:
-                st.warning("⚠️ Poucos dados para treinar. Adicione mais exemplos no Firebase.")
+            if not conceitos:
+                st.warning("⚠️ Nenhum conceito encontrado. Vá para a Etapa 1 primeiro.")
             else:
-                X = np.vstack(X)
-                modelo = RandomForestClassifier(n_estimators=200)
-                modelo.fit(X, y)
-                st.session_state.modelo = modelo
-                st.session_state.X, st.session_state.y = X, y
-                joblib.dump(modelo, "modelo_treinado.pkl")
+                st.info("🔍 Buscando arquivos no Supabase...")
 
-                st.success("✅ Modelo treinado e salvo com sucesso!")
-                st.write(f"**Amostras usadas:** {len(X)}")
+                arquivos_resp = supabase.table("arquivos").select("*").execute()
+                arquivos = arquivos_resp.data
+
+                X, y = [], []
+
+                for conceito in conceitos:
+                    palavra = conceito["palavra"]
+                    categoria = conceito["categoria"]
+                    st.write(f"🧩 Processando conceito **{palavra} ({categoria})**")
+
+                    relacionados = [a for a in arquivos if palavra in [t.lower() for t in a.get("tags", [])]]
+
+                    for item in relacionados:
+                        tipo = item.get("tipo")
+                        try:
+                            if tipo == "texto":
+                                feat = embed_texto(item.get("descricao", ""))
+                            elif tipo == "imagem":
+                                feat = embed_imagem(item["url"])
+                            elif tipo == "audio":
+                                feat = embed_audio(item["url"])
+                            else:
+                                continue
+
+                            X.append(feat)
+                            y.append(categoria)
+
+                        except Exception as e:
+                            st.error(f"Erro ao processar {item.get('url', '')[:40]}...: {e}")
+
+                if len(X) < 3:
+                    st.warning("⚠️ Poucos dados para treinar. Adicione mais exemplos no Supabase.")
+                else:
+                    X = np.vstack(X)
+                    modelo = RandomForestClassifier(n_estimators=200)
+                    modelo.fit(X, y)
+                    st.session_state.modelo = modelo
+                    st.session_state.X, st.session_state.y = X, y
+                    joblib.dump(modelo, "modelo_treinado.pkl")
+
+                    st.success("✅ Modelo treinado e salvo com sucesso!")
+                    st.write(f"**Amostras usadas:** {len(X)}")
+
+        except Exception as e:
+            st.error(f"❌ Erro no treinamento: {e}")
 
 # ======================================================
-# 3️⃣ ETAPA 3 – Fazer previsão
+# 3️⃣ ETAPA 3 – FAZER PREVISÃO
 # ======================================================
 with aba[2]:
     st.header("🔮 Etapa 3 – Fazer previsão multimodal")
@@ -166,3 +179,4 @@ with aba[2]:
             cor = {"Baixo": "green", "Moderado": "orange", "Alto": "red"}.get(pred, "blue")
             st.markdown(f"<h3>🧠 Previsão: <span style='color:{cor}'>{pred}</span></h3>", unsafe_allow_html=True)
             st.bar_chart(df_proba.set_index("Categoria"))
+
